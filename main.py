@@ -74,7 +74,11 @@ async def on_topic(cb: CallbackQuery, state: FSMContext):
             await state.update_data(player=player) 
         except Exception:
             logging.exception("Stratz error")
-            text = "Ошибка при запросе к Stratz. Повторите попытку или попробуйте позже"
+            await cb.message.edit_text(
+                "⚠️ Ошибка при запросе к Stratz. Повторите попытку или попробуйте позже.", 
+                reply_markup=topic_button()
+            )
+            return
     text = format_player(player, topic)
     if not text:
         text = "❌ Нет данных"
