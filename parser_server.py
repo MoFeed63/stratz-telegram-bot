@@ -76,8 +76,7 @@ query GetPlayerHeroesStats($steamId: Long!, $heroesGroupByRequest: PlayerMatches
 """
 
 
-
-headers={
+headers = {
     "Authorization": f"Bearer {api_token}",
 }
 
@@ -89,21 +88,22 @@ async def get_player(account_id: int) -> dict:
             "groupBy": "HERO",
             "playerList": "SINGLE",
             "skip": 0,
-            "take": 1000
-        }
+            "take": 1000,
+        },
     }
     async with AsyncSession(impersonate="chrome") as session:
         resp = await session.post(
             "https://api.stratz.com/graphql",
             json={"query": QUERY, "variables": variables},
             headers=headers,
-            timeout=30.0
+            timeout=30.0,
         )
         resp.raise_for_status()
         if resp.status_code != 200:
             return {"error": "Блокировка", "status": resp.status_code}
         data = resp.json()
-        print(data)
-        return data['data']['player']
+        # print(data)
+        return data
+
 
 # asyncio.run(get_player(1172601372))

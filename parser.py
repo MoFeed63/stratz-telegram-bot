@@ -104,7 +104,7 @@ async def get_player(account_id: int) -> dict:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["data"]["player"]
+        return data
 
 
 if __name__ == "__main__":

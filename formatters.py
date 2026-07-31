@@ -85,7 +85,7 @@ def format_player(data: dict, topic: str):
         formatted_heroes = []
         for h in heroes_list:
             time = h['lastMatchDateTime']
-            date_msk = datetime.fromtimestamp(time, tz=msk_tz)
+            date_msk = datetime.fromtimestamp(time, tz=msk_tz )
             line = (
                 f"Герой: {HEROES_DICT.get(h['id'])}\n"
                 f"Всего матчей: {h['matchCount']}\n"
