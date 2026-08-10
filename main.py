@@ -1,17 +1,26 @@
-from steam_id import get_steam_id
 import asyncio
-from parser import get_player
+import logging
+import os
+
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import Message, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import Command, StateFilter, CommandObject
-import os
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
+from database import close_db, get_user_slots, init_db, update_user_slot
 from dotenv import load_dotenv
-import logging
 from formatters import format_player
+from parser import get_player
+from steam_id import get_steam_id
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -46,11 +55,11 @@ private_account_button = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="📈 Винрейт", callback_data="topic_winrate")],
         [InlineKeyboardButton(text="🔍 Найти новый аккаунт", callback_data="topic_research")]
     ])
-
-def get_accounts_keyboard() -> ReplyKeyboardMarkup:
-    btn1_text = f"🎮 Аккаунт 1: {USER_ACCOUNTS["1"]["nick"]}"
-    btn2_text = f"🎮 Аккаунт 2: {USER_ACCOUNTS["2"]["nick"]}"
-    btn3_text = f"🎮 Аккаунт 3: {USER_ACCOUNTS["3"]["nick"]}"
+async def get_accounts_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    user = await get_user_slots(user_id)
+    btn1_text = f"🎮 Аккаунт 1: {user["slot_1"].get("nick")}"
+    btn2_text = f"🎮 Аккаунт 2: {user["slot_2"]["nick"]}"
+    btn3_text = f"🎮 Аккаунт 3: {user["slot_3"]["nick"]}"
     return ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=btn1_text),
@@ -63,8 +72,9 @@ def get_accounts_keyboard() -> ReplyKeyboardMarkup:
 @router.message(Command("start"))
 async def cmd_start(msg: Message, state: FSMContext):
     await state.update_data(player=None, data_dict=None)
+    user_id = msg.from_user.id
     await msg.answer("Привет, Используй команду `/add 1`, `/add 2` или `/add 3`, чтобы привязать аккаунт.", 
-        reply_markup=get_accounts_keyboard(),
+        reply_markup=await get_accounts_keyboard(user_id),
         parse_mode="Markdown")
 @router.message(Command("add"))
 async def add_account(msg: Message, command: CommandObject, state: FSMContext):
@@ -72,11 +82,13 @@ async def add_account(msg: Message, command: CommandObject, state: FSMContext):
     if not command.args or command.args not in ["1", "2", "3"]:
         await msg.answer("Ошибка! Пишите команду правильно, например: `/add 1`", parse_mode="Markdown")
         return
-    
-    button_num = command.args
-    await state.update_data(chosen_button=button_num)
+
+    user_id = msg.from_user.id
+    slot_num = command.args
+    # await update_user_slot(user_id=user_id, slot_num=button_num)
+    await state.update_data(chosen_slot=slot_num)
     await state.set_state(Form.waiting_steam)
-    await msg.answer(f"Вы добавляете аккаунт на кнопку №{button_num}.\nПришлите ссылку или никнейм Steam профиля:")
+    await msg.answer(f"Вы добавляете аккаунт на кнопку №{slot_num}.\nПришлите ссылку или никнейм Steam профиля:")
 
 @router.message(StateFilter(Form.waiting_steam))
 async def get_link(msg: Message, state: FSMContext):
@@ -85,6 +97,7 @@ async def get_link(msg: Message, state: FSMContext):
         account_id = await get_steam_id(steam)
         await state.update_data(account_id=account_id)
         await state.set_state(Form.waiting_nikname)
+        # await update_user_slot(account_id=account_id)
         await msg.answer("Напишите никнейм, под которым у вас будет сохранен данный аккаунт на кнопке:")
     except Exception:
         logging.exception("SteamID error")
@@ -95,18 +108,18 @@ async def get_link(msg: Message, state: FSMContext):
 @router.message(StateFilter(Form.waiting_nikname))
 async def get_nikname(msg: Message, state: FSMContext):
     nick = msg.text
-    user_data = await state.get_data()
-    button_num = user_data['chosen_button']
-    account_id = user_data['account_id']
-    USER_ACCOUNTS[button_num] = {
-        "nick": nick,
-        "id": account_id
-    }
+    user_id = msg.from_user.id
+    # await update_user_slot(nick=nick)
+    state_data = await state.get_data()
+    account_id = state_data['account_id']
+    # user_data = await get_user_slots(user_id)
+    slot_num = state_data['chosen_slot']
+    # account_id = user_data[f'slot_{button_num}']['id']
     await state.clear()
-    await state.update_data(account_id=account_id)
+    await update_user_slot(user_id=user_id, slot_num=slot_num, account_id=account_id, nick=nick)
     await msg.answer(
-        f"Успешно! Аккаунт на кнопке {button_num} обновлен.\nНик: {nick}",
-        reply_markup=get_accounts_keyboard()
+        f"Успешно! Аккаунт на кнопке {slot_num} обновлен.\nНик: {nick}",
+        reply_markup=await get_accounts_keyboard(user_id)
     )
 @router.message(F.text.startswith("🎮 Аккаунт"))
 async def click_keyboard(msg: Message, state: FSMContext):
@@ -114,13 +127,14 @@ async def click_keyboard(msg: Message, state: FSMContext):
     num = msg.text.split("Аккаунт ")[1].split(":")[0]
     data = None
 
-    if msg.text == f"🎮 Аккаунт {num}: Нет аккаунта":
+    if msg.text == f"🎮 Аккаунт {num}: None":
         await msg.answer("Этот слот пуст. Используйте команду `/add [номер]`, чтобы добавить аккаунт.", parse_mode="Markdown")
         return
     else:
         chosen_acc = num
     # user_data = await state.get_data()
-    account_id = USER_ACCOUNTS[num].get('id')
+    user_slots = await get_user_slots(msg.from_user.id)
+    account_id = user_slots[f"slot_{num}"]['id']
     if chosen_acc:
         try:
             await state.set_state(Form.choose_topic)
@@ -230,6 +244,7 @@ async def on_topic(cb: CallbackQuery, state: FSMContext):
                 raise
     
 async def main():
+    await init_db()
     session = AiohttpSession(proxy=PROXY)
     bot = Bot(BOT_TOKEN, session=session)
     dp = Dispatcher()
@@ -238,6 +253,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await session.close()
+        await close_db()
 
 if __name__ == "__main__":
     asyncio.run(main())
